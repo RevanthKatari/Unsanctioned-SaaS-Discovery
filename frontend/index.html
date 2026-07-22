@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shadow SaaS Analyzer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', sans-serif; }
+  .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+  .risk-Critical { color: #ff3b5c; }
+  .risk-High { color: #f59e0b; }
+  .risk-Medium { color: #eab308; }
+  .risk-Low { color: #38bdf8; }
+  .badge-Critical { background: rgba(255,59,92,0.15); color: #ff3b5c; border: 1px solid rgba(255,59,92,0.3); }
+  .badge-High { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+  .badge-Medium { background: rgba(234,179,8,0.15); color: #eab308; border: 1px solid rgba(234,179,8,0.3); }
+  .badge-Low { background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
+  .row-hover:hover { background: rgba(255,255,255,0.04); }
+  .row-hover { cursor: pointer; }
+  .reason-tip {
+    position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; z-index: 20;
+    width: 260px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.4;
+    background: rgba(15,23,42,0.97); border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4); color: #cbd5e1;
+    opacity: 0; pointer-events: none; transform: translateY(4px);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+  }
+  .group:hover .reason-tip { opacity: 1; transform: translateY(0); }
+  #detailModal { display: none; }
+  #detailModal.open { display: flex; }
+</style>
+</head>
+<body class="bg-slate-900 text-slate-200 min-h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="w-60 shrink-0 h-screen sticky top-0 border-r border-white/5 bg-slate-950/60 flex flex-col">
+    <div class="px-5 py-6 flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-red-500 to-amber-500 flex items-center justify-center font-bold text-slate-950">S</div>
+      <div>
+        <div class="font-bold text-white leading-tight">Shadow SaaS</div>
+        <div class="text-xs text-slate-500 leading-tight">Log Analyzer</div>
+      </div>
+    </div>
+    <nav class="flex-1 px-3 space-y-1 text-sm">
+      <a href="#overview" class="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-white font-medium">Overview</a>
+      <a href="#anomalies" class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">Anomalies</a>
+      <a href="#performance" class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">Performance</a>
+    </nav>
+    <div class="p-4 border-t border-white/5">
+      <label class="block text-xs text-slate-500 mb-2">Ingest a log file</label>
+      <input id="fileInput" type="file" accept=".csv" class="hidden" />
+      <button id="uploadBtn" class="w-full text-sm font-medium bg-white/10 hover:bg-white/15 text-white rounded-lg py-2 transition">Upload CSV</button>
+      <div id="uploadStatus" class="text-xs text-slate-500 mt-2"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 h-screen overflow-y-auto">
+    <header class="sticky top-0 z-10 backdrop-blur-md bg-slate-900/70 border-b border-white/5 px-8 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-bold text-white">Unsanctioned SaaS Discovery</h1>
+        <p class="text-sm text-slate-500">Real-time shadow IT / shadow AI network traffic detection</p>
+      </div>
+      <div id="lastUpdated" class="text-xs text-slate-500"></div>
+    </header>
+
+    <section id="overview" class="px-8 pt-6 space-y-6">
+      <!-- Top metrics -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div class="glass rounded-2xl p-5">
+          <div class="text-xs uppercase tracking-wide text-slate-500">Logs Scanned</div>
+          <div id="mLogsScanned" class="text-3xl font-extrabold text-white mt-2">—</div>
+        </div>
+        <div class="glass rounded-2xl p-5">
+          <div class="text-xs uppercase tracking-wide text-slate-500">Anomalies Detected</div>
+          <div id="mAnomalies" class="text-3xl font-extrabold text-white mt-2">—</div>
+        </div>
+        <div class="glass rounded-2xl p-5 border-red-500/20">
+          <div class="text-xs uppercase tracking-wide text-slate-500">Critical Risk</div>
+          <div id="mCritical" class="text-3xl font-extrabold risk-Critical mt-2">—</div>
+        </div>
+        <div class="glass rounded-2xl p-5">
+          <div class="text-xs uppercase tracking-wide text-slate-500">Processing Time</div>
+          <div id="mProcessing" class="text-3xl font-extrabold text-white mt-2">—</div>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div class="glass rounded-2xl p-5 xl:col-span-1">
+          <div class="text-sm font-semibold text-white mb-3">Risk Breakdown</div>
+          <canvas id="riskDonut" height="220"></canvas>
+        </div>
+        <div class="glass rounded-2xl p-5 xl:col-span-2">
+          <div class="text-sm font-semibold text-white mb-3">Anomalies Over Time</div>
+          <canvas id="timeLine" height="220"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Anomalies table -->
+    <section id="anomalies" class="px-8 py-6">
+      <div class="glass rounded-2xl p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="text-sm font-semibold text-white">Flagged Connections</div>
+          <div class="flex items-center gap-2">
+            <select id="riskFilter" class="bg-slate-800 border border-white/10 text-sm rounded-lg px-3 py-1.5 text-slate-200">
+              <option value="">All Risk Levels</option>
+              <option value="Critical">Critical</option>
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-slate-500 border-b border-white/10">
+                <th class="py-2 pr-4 font-medium">Timestamp</th>
+                <th class="py-2 pr-4 font-medium">Source IP</th>
+                <th class="py-2 pr-4 font-medium">Destination Domain</th>
+                <th class="py-2 pr-4 font-medium">Category</th>
+                <th class="py-2 pr-4 font-medium">Risk</th>
+                <th class="py-2 pr-4 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody id="anomalyRows" class="divide-y divide-white/5"></tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-between mt-4 text-xs text-slate-500">
+          <div id="pageInfo"></div>
+          <div class="flex gap-2">
+            <button id="prevPage" class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300">Prev</button>
+            <button id="nextPage" class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300">Next</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Performance -->
+    <section id="performance" class="px-8 pb-10">
+      <div class="glass rounded-2xl p-5">
+        <div class="text-sm font-semibold text-white mb-4">Ingestion Performance History</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-slate-500 border-b border-white/10">
+                <th class="py-2 pr-4 font-medium">Run ID</th>
+                <th class="py-2 pr-4 font-medium">Records</th>
+                <th class="py-2 pr-4 font-medium">Anomalies</th>
+                <th class="py-2 pr-4 font-medium">Duration (ms)</th>
+                <th class="py-2 pr-4 font-medium">Records / sec</th>
+                <th class="py-2 pr-4 font-medium">Peak Memory (MB)</th>
+              </tr>
+            </thead>
+            <tbody id="perfRows" class="divide-y divide-white/5"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Anomaly detail modal -->
+  <div id="detailModal" class="fixed inset-0 z-50 items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4" onclick="if(event.target===this) closeModal()">
+    <div class="glass rounded-2xl w-full max-w-lg p-6 relative">
+      <button onclick="closeModal()" class="absolute top-4 right-4 text-slate-500 hover:text-white text-lg leading-none">✕</button>
+      <div class="flex items-center gap-3 mb-1">
+        <h2 id="modalDomain" class="text-lg font-bold text-white"></h2>
+        <span id="modalRiskBadge" class="text-xs px-2 py-1 rounded-full"></span>
+      </div>
+      <div id="modalCategory" class="text-sm text-slate-400 mb-4"></div>
+
+      <div class="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
+        <div class="text-xs uppercase tracking-wide text-slate-500 mb-1">Why this was flagged</div>
+        <p id="modalReason" class="text-sm text-slate-200 leading-relaxed"></p>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><div class="text-xs text-slate-500">Timestamp</div><div id="modalTimestamp" class="text-slate-200"></div></div>
+        <div><div class="text-xs text-slate-500">Protocol</div><div id="modalProtocol" class="text-slate-200"></div></div>
+        <div><div class="text-xs text-slate-500">Source IP</div><div id="modalSourceIp" class="font-mono text-xs text-slate-200"></div></div>
+        <div><div class="text-xs text-slate-500">Destination IP</div><div id="modalDestIp" class="font-mono text-xs text-slate-200"></div></div>
+        <div><div class="text-xs text-slate-500">Bytes Transferred</div><div id="modalBytes" class="text-slate-200"></div></div>
+        <div><div class="text-xs text-slate-500">Current Status</div><div id="modalAction" class="text-slate-200"></div></div>
+      </div>
+
+      <div class="flex gap-2 mt-5">
+        <button id="modalBlockBtn" class="flex-1 text-sm font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-lg py-2">Block</button>
+        <button id="modalAckBtn" class="flex-1 text-sm font-medium bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 rounded-lg py-2">Acknowledge</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const API = "/api";
+let currentPage = 1;
+const pageSize = 25;
+let currentRiskFilter = "";
+let donutChart, lineChart;
+
+function fmtNumber(n) { return n?.toLocaleString?.() ?? n; }
+
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function loadSummary() {
+  const s = await fetchJSON(`${API}/metrics/summary`);
+  document.getElementById("mLogsScanned").textContent = fmtNumber(s.total_logs_scanned);
+  document.getElementById("mAnomalies").textContent = fmtNumber(s.total_anomalies);
+  document.getElementById("mCritical").textContent = fmtNumber(s.critical_count);
+  document.getElementById("mProcessing").textContent = s.last_processing_time_ms ? `${s.last_processing_time_ms.toFixed(0)} ms` : "—";
+
+  const levels = ["Critical", "High", "Medium", "Low"];
+  const colors = { Critical: "#ff3b5c", High: "#f59e0b", Medium: "#eab308", Low: "#38bdf8" };
+  const data = levels.map(l => s.risk_breakdown[l] || 0);
+
+  if (donutChart) donutChart.destroy();
+  donutChart = new Chart(document.getElementById("riskDonut"), {
+    type: "doughnut",
+    data: {
+      labels: levels,
+      datasets: [{ data, backgroundColor: levels.map(l => colors[l]), borderWidth: 0 }],
+    },
+    options: {
+      plugins: { legend: { position: "bottom", labels: { color: "#cbd5e1" } } },
+      cutout: "65%",
+    },
+  });
+}
+
+async function loadTimeSeries() {
+  const rows = await fetchJSON(`${API}/metrics/anomalies-over-time`);
+  if (lineChart) lineChart.destroy();
+  lineChart = new Chart(document.getElementById("timeLine"), {
+    type: "line",
+    data: {
+      labels: rows.map(r => r.day),
+      datasets: [{
+        label: "Anomalies",
+        data: rows.map(r => r.count),
+        borderColor: "#ff3b5c",
+        backgroundColor: "rgba(255,59,92,0.15)",
+        fill: true,
+        tension: 0.3,
+      }],
+    },
+    options: {
+      scales: {
+        x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.05)" } },
+        y: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.05)" } },
+      },
+      plugins: { legend: { display: false } },
+    },
+  });
+}
+
+const CATEGORY_REASONS = {
+  "Shadow AI": "Traffic to an unsanctioned AI/LLM service. Data pasted into these tools can leave the organization's control and may be used for third-party model training or logging.",
+  "Unsanctioned Storage": "Connection to a personal cloud storage provider outside corporate DLP controls — a common path for accidental or intentional data exfiltration.",
+  "Unsanctioned Collaboration": "Traffic to a collaboration/productivity tool that hasn't been approved by IT — content shared here bypasses compliance retention and access controls.",
+  "Unsanctioned Messaging": "Consumer messaging platform not covered by corporate eDiscovery, retention, or DLP policy.",
+  "Unsanctioned Design": "Non-approved design/creative tool — brand assets or confidential mockups may be uploaded outside IT visibility.",
+  "Data Exfiltration Risk": "This domain is commonly abused to anonymously paste or share text, and is frequently used to exfiltrate credentials, source code, or secrets.",
+  "Remote Access Risk": "Remote-control or tunneling service capable of bypassing network perimeter controls — high risk of unauthorized remote access into the corporate network.",
+  "Unsanctioned Code Hosting": "Code hosting platform outside the approved SCM — proprietary source code may be pushed to a personal or public repository.",
+};
+
+function reasonFor(item) {
+  const base = CATEGORY_REASONS[item.category] || "This destination is not on the approved SaaS list and matched an entry in the organization's risk matrix.";
+  return `${base} Classified as ${item.risk_level} risk under the "${item.category}" category.`;
+}
+
+const anomalyCache = new Map();
+
+async function loadAnomalies() {
+  const params = new URLSearchParams({ page: currentPage, page_size: pageSize, sort_by: "timestamp", order: "desc" });
+  if (currentRiskFilter) params.set("risk_level", currentRiskFilter);
+  const data = await fetchJSON(`${API}/anomalies?${params}`);
+
+  const tbody = document.getElementById("anomalyRows");
+  tbody.innerHTML = data.items.map(item => {
+    anomalyCache.set(item.id, item);
+    return `
+    <tr class="row-hover" data-row-id="${item.id}">
+      <td class="py-2 pr-4 text-slate-400">${new Date(item.timestamp).toLocaleString()}</td>
+      <td class="py-2 pr-4 font-mono text-xs">${item.source_ip}</td>
+      <td class="py-2 pr-4 font-medium text-white">
+        <div class="group relative inline-block">
+          <span class="border-b border-dashed border-slate-600">${item.destination_domain}</span>
+          <div class="reason-tip">${reasonFor(item)}</div>
+        </div>
+      </td>
+      <td class="py-2 pr-4 text-slate-400">${item.category}</td>
+      <td class="py-2 pr-4"><span class="text-xs px-2 py-1 rounded-full badge-${item.risk_level}">${item.risk_level}</span></td>
+      <td class="py-2 pr-4">
+        ${item.action === "Pending" ? `
+          <button data-id="${item.id}" data-action="Blocked" class="actionBtn text-xs px-2 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 mr-1">Block</button>
+          <button data-id="${item.id}" data-action="Acknowledged" class="actionBtn text-xs px-2 py-1 rounded-lg bg-blue-500/10 text-blue-300 hover:bg-blue-500/20">Acknowledge</button>
+        ` : `<span class="text-xs text-slate-500">${item.action}</span>`}
+      </td>
+    </tr>
+  `;
+  }).join("");
+
+  const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
+  document.getElementById("pageInfo").textContent = `Page ${data.page} of ${totalPages} · ${fmtNumber(data.total)} flagged connections`;
+
+  document.querySelectorAll("tr[data-row-id]").forEach(row => {
+    row.addEventListener("click", () => openModal(Number(row.dataset.rowId)));
+  });
+
+  document.querySelectorAll(".actionBtn").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await fetchJSON(`${API}/anomalies/${btn.dataset.id}/action`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: btn.dataset.action }),
+      });
+      loadAnomalies();
+    });
+  });
+}
+
+let modalAnomalyId = null;
+
+function openModal(id) {
+  const item = anomalyCache.get(id);
+  if (!item) return;
+  modalAnomalyId = id;
+
+  document.getElementById("modalDomain").textContent = item.destination_domain;
+  const badge = document.getElementById("modalRiskBadge");
+  badge.textContent = item.risk_level;
+  badge.className = `text-xs px-2 py-1 rounded-full badge-${item.risk_level}`;
+  document.getElementById("modalCategory").textContent = item.category;
+  document.getElementById("modalReason").textContent = reasonFor(item);
+  document.getElementById("modalTimestamp").textContent = new Date(item.timestamp).toLocaleString();
+  document.getElementById("modalProtocol").textContent = item.protocol;
+  document.getElementById("modalSourceIp").textContent = item.source_ip;
+  document.getElementById("modalDestIp").textContent = item.destination_ip;
+  document.getElementById("modalBytes").textContent = fmtNumber(item.bytes_transferred) + " B";
+  document.getElementById("modalAction").textContent = item.action;
+
+  const showActions = item.action === "Pending";
+  document.getElementById("modalBlockBtn").style.display = showActions ? "block" : "none";
+  document.getElementById("modalAckBtn").style.display = showActions ? "block" : "none";
+
+  document.getElementById("detailModal").classList.add("open");
+}
+
+function closeModal() {
+  document.getElementById("detailModal").classList.remove("open");
+  modalAnomalyId = null;
+}
+
+document.getElementById("modalBlockBtn").addEventListener("click", () => performModalAction("Blocked"));
+document.getElementById("modalAckBtn").addEventListener("click", () => performModalAction("Acknowledged"));
+
+async function performModalAction(action) {
+  if (modalAnomalyId == null) return;
+  await fetchJSON(`${API}/anomalies/${modalAnomalyId}/action`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  closeModal();
+  loadAnomalies();
+}
+
+async function loadPerformance() {
+  const rows = await fetchJSON(`${API}/metrics/performance`);
+  document.getElementById("perfRows").innerHTML = rows.map(r => `
+    <tr class="row-hover">
+      <td class="py-2 pr-4 font-mono text-xs">${r.run_id}</td>
+      <td class="py-2 pr-4">${fmtNumber(r.total_records)}</td>
+      <td class="py-2 pr-4">${fmtNumber(r.anomalies_found)}</td>
+      <td class="py-2 pr-4">${r.duration_ms.toFixed(1)}</td>
+      <td class="py-2 pr-4 text-emerald-400 font-semibold">${fmtNumber(Math.round(r.records_per_second))}</td>
+      <td class="py-2 pr-4">${r.peak_memory_mb.toFixed(2)}</td>
+    </tr>
+  `).join("");
+}
+
+async function refreshAll() {
+  await Promise.all([loadSummary(), loadTimeSeries(), loadAnomalies(), loadPerformance()]);
+  document.getElementById("lastUpdated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+}
+
+document.getElementById("riskFilter").addEventListener("change", e => {
+  currentRiskFilter = e.target.value;
+  currentPage = 1;
+  loadAnomalies();
+});
+document.getElementById("prevPage").addEventListener("click", () => { if (currentPage > 1) { currentPage--; loadAnomalies(); } });
+document.getElementById("nextPage").addEventListener("click", () => { currentPage++; loadAnomalies(); });
+
+document.getElementById("uploadBtn").addEventListener("click", () => document.getElementById("fileInput").click());
+document.getElementById("fileInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const status = document.getElementById("uploadStatus");
+  status.textContent = "Ingesting...";
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const summary = await fetchJSON(`${API}/upload-log`, { method: "POST", body: formData });
+    status.textContent = `Done: ${summary.anomalies_found} flagged / ${summary.total_records} records (${Math.round(summary.records_per_second)} rec/s)`;
+    refreshAll();
+  } catch (err) {
+    status.textContent = "Upload failed";
+  }
+});
+
+refreshAll();
+setInterval(refreshAll, 30000);
+</script>
+</body>
+</html>
